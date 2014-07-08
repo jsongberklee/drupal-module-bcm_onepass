@@ -1,0 +1,466 @@
+<?php
+/**
+ * @file
+ * A custom module to use Berklee OnePass LDAP authentication
+ */
+  
+function bcm_onepass_form_alter(&$form, &$form_state, $form_id)
+{
+	//echo '<pre>';
+	//var_dump($form_id);
+	//echo '</pre>';	
+	
+	//krumo($form_id);
+	
+	//check to see if the role is already created
+	//$oUserRole = user_role_load_by_name('administrator');
+	//debug($oUserRole);
+}
+
+/**
+* Implements hook_form_FORM_ID_alter(). for user_login_block
+* Insert ldap berklee onepass validator for user login block 
+*/
+function bcm_onepass_form_user_login_block_alter(&$form)
+{	
+	//debug($form);
+	$form['name']['#title'] = 'Berklee E-mail address';
+	$form['name']['#size'] = 28;
+	$form['pass']['#title'] = 'Berklee E-mail Password';
+	$form['pass']['#size'] = 28;
+	$form['links'] = null; 
+	//$form['pass']['#title'] = 'Berklee E-mail';
+	$form['#validate'] = array('bcm_onepass_user_login_ldap_validator', 'user_login_name_validate', 'user_login_authenticate_validate', 'user_login_final_validate');
+
+	// test only
+	//$form['#submit'] = array('bcm_onepass_user_login_submit');
+	//$form['#validate'] = array('bcm_onepass_login_ldap_validator', 'bcm_onepass_user_login_name_validate', 'bcm_onepass_user_login_authenticate_validate', 'bcm_onepass_user_login_final_validate');
+	
+	//global $user;	
+	//$targetUser = user_load(1);
+	/**/
+	//debug($targetUser->name);
+	/**/
+}
+
+/**
+* Implements hook_form_FORM_ID_alter(). for user_login
+* redirect to home page if an anonymous user approches, there should be a better way to do it.
+*/
+function bcm_onepass_form_user_login_alter(&$form, &$form_state)
+{
+	global $user;
+	global $base_url;
+	if($user->uid == 0)	{ drupal_goto($base_url);}
+	//debug($base_url);
+}
+
+/**
+* LDAP validating function
+* 
+*/
+
+function bcm_onepass_user_login_ldap_validator($form, &$form_state)
+{
+	
+	$sUsername = $form_state['values']['name'];
+	$sPassword = trim($form_state['values']['pass']);
+	$sSearchString = $sUsername;
+
+/****************************************************************************************************************/
+	// special accout to bypass LDAP Authentication
+	// $superAdminUser = user_load(1);	// $aBypassLdapAuthNames = array($superAdminUser->name, 'contentadmin');
+	$aBypassLdapAuthNames = explode(',', trim(variable_get('bcm_onepass_bypass_user')));
+	if(in_array($sUsername, $aBypassLdapAuthNames))
+	{
+		return;
+	}
+/****************************************************************************************************************/
+	// LDAP server configuration specifically for Active Directory
+	$bcm_onepass_data = variable_get('bcm_onepass_data', array()); //Key -> ldap_server, port, base_dn
+	//debug($bcm_onepass_data);
+	if(empty($bcm_onepass_data['ldap_server']) || empty($bcm_onepass_data['port']) || empty($bcm_onepass_data['base_dn']))
+	{
+		form_set_error('', 'LDAP server configuration is not set up, please visit "admin/config/people/bcm_onepass" to correct them.');
+		return;
+	}
+	// static
+	//$sPort = '636';
+	//$sHost = 'ldaps://bos-dc1.berklee.edu';
+	//$sBaseDN = 'dc=berklee,dc=edu';
+	$sHost = $bcm_onepass_data['ldap_server'];
+	$sPort = $bcm_onepass_data['port'];
+	$sBaseDN = $bcm_onepass_data['base_dn'];
+
+	//----------------
+	//VALIDATE: die() if either param  is null
+	//logic: if either isset() is false the "!" makes it true
+	// threfore the die() executes
+	if(!isset($sUsername) || !isset($sPassword) ) 
+	{
+		//form_set_error('name', t('The username and/or the password field is/are empty.'), array( '%name' => $form_state['values']['name'], '%pass' => $form_state['values']['pass'] ) );
+		//form_set_error('name', t('jsongjsongjsongjsong. %name <-> %pass '), array( '%name' => $form_state['values']['name'], '%pass' => $form_state['values']['pass'] ) );
+		return;
+	}
+	else 
+	{
+		$sLdapRDN = $sUsername; //used by ldap_bind()
+	}
+
+	
+	
+	//-----------------------------------------------
+	// ----  STEP 1: connect to LDAP sever  ---------
+	//-----------------------------------------------
+	$oLdapConnect_res = ldap_connect( $sHost , $sPort );
+	//NOTE: using PHP's "@" operator for suppressing the error messages of 
+	// the ldap_connect() function
+	
+	if( $oLdapConnect_res == null)
+	{
+		drupal_set_message(t("ldap connect error"), 'error');
+	}
+	else
+	{
+		drupal_set_message(t("ldap connect succeeded"), 'status');
+	}
+	
+	// version of OpenLDAP being used requires version 3 of the LDAP protocol
+	// which will help provide more security when connecting
+	if (!ldap_set_option($oLdapConnect_res, LDAP_OPT_REFERRALS, 0))
+	{
+		drupal_set_message(t("Failed to set LDAP_OPT_REFERRALS to 0."), 'error');
+	}
+	
+	$iVersion = 3;
+	if (!ldap_set_option($oLdapConnect_res, LDAP_OPT_PROTOCOL_VERSION, $iVersion))
+	{
+		drupal_set_message(t("Failed to set LDAP Protocol version to 3."), 'error');
+	}
+	
+	//-----------------------------------------------
+	// ---- STEP 2: BIND---------
+	//-----------------------------------------------
+	// bind (authenticate) to the ldap server based upon the $sBaseDN and the password	
+	$aLdapResult = null;
+	$oLdapSearch_res = null;
+	//$aJustTheseLdapFields = array("uid", "ou", "displayname", "department", "description", "info", "name", "employeenumber", "samaccountname", "userprincipalname", "mail", "sn", "givenname", "dn");
+	$aJustTheseLdapFields = array("info", "memberof", "displayname", "employeenumber", "samaccountname", "userprincipalname");
+	
+	// if the bind is successful
+	if ($rBind = @ldap_bind($oLdapConnect_res, $sLdapRDN, $sPassword))
+	{
+		//-----------------------------------------------
+		// ---- STEP 3: search by UID --------- validates username & password
+		//-----------------------------------------------
+		// search the ldap for the users info
+		$oLdapSearch_res = @ldap_search( $oLdapConnect_res,	$sBaseDN, 'userPrincipalName='.$sSearchString, $aJustTheseLdapFields);
+		//$oLdapSearch_res = @ldap_search( $oLdapConnect_res,	$sBaseDN, 'userPrincipalName='.$sSearchString); //."*" , $aJustTheseLdapFields );
+		
+		// if there is a valid result from the ldap search
+		if ($oLdapSearch_res)
+		{
+			// get the result info as an array
+			$aUserLdapInfo = @ldap_get_entries($oLdapConnect_res,$oLdapSearch_res	);
+			// $aLdapResult structure example:  $aLdapResult[0]['displayname'][0] == value
+						
+			//$user = user_load($form_state['uid']); // example of loading a user OBJECT
+			//$userprincipalname = $aLdapResult[0]['userprincipalname'][0]; // example of extracting email from the search result
+			
+			////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			// DO NOT STORE LDAP PASSWORD IN DRUPAL USER ACCOUNT!
+			// once ldap connection is reset the password field with a fake, so Drupal system wouldn't save real LDAP password
+			$sPassword = $form_state['values']['pass'] = 'JSLF.olKQwASOcLIv15DSaJAip7XytA2i';
+			////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			
+			$fullName = $aUserLdapInfo[0]['displayname'][0];
+			$bcmId = $aUserLdapInfo[0]['employeenumber'][0];
+			$bcmRole = strtolower($aUserLdapInfo[0]['info'][0]); // $bcmRole = $aUserLdapInfo[0]['memberof'][0];
+			
+			// try to load a user by the username field 
+			$oBcm_onepass_user = user_load_by_name($sUsername);
+			
+			// check role and create one if there is none with the role name gets passed.			
+			$iUserRoleID = _bcm_onepass_roles_check($bcmRole);
+			
+			if(!empty($aUserLdapInfo))
+			{
+				drupal_set_message("OnePass check passed.", 'status');
+			}
+
+			if(!$oBcm_onepass_user) // create user for the firtime logger
+			{
+				bcm_onepass_create_user($sUsername, $sPassword, $fullName, $bcmId, $bcmRole, $iUserRoleID);
+			}
+			else // update user information if there is a valid user
+			{
+				bcm_onepass_update_user($oBcm_onepass_user, $sPassword, $fullName, $bcmId, $bcmRole, $iUserRoleID);
+				return; // by pass rest
+			}
+			
+		} //end LDAP search
+		else 
+		{
+			drupal_set_message(t("ldap searching query failed"), 'error');
+		}
+		
+	}// end BIND attempt
+	else // else, the LDAP bind failed
+	{
+		drupal_set_message(t("LDAP binding failed"), 'error');
+	}
+}
+
+/**
+ *  Adds permissions to a role
+ *  @role_name - the name of the role to receive an update
+ *  @permissions - the array of permissions to add
+ *
+function simple_user_roles_add_permissions($role_name, $permissions)  {
+  $role = user_role_load_by_name($role_name);
+  user_role_grant_permissions($role->rid, $permissions);
+}
+/**/
+
+/**
+ *  Adds a new role
+ *  @role_name - the name of the role to be added
+ *  @weight - the optional display weight for role
+ */
+function _bcm_onepass_roles_check($role_name)  {
+	$oRole = user_role_load_by_name($role_name);
+	if (!$oRole)  
+	{
+		$oAdminRole = user_role_load_by_name('administrator');
+		$oNewRole = new stdClass();
+		$oNewRole->name = $role_name;
+		$oNewRole->weight = $oAdminRole->weight;
+		//$oAdminRole->weight = ((int)$oNewRole->weight)+1;
+		user_role_save($oNewRole);
+		drupal_set_message('The role "'.$role_name.'" has been created.', 'status');
+		$oNewRoleID = user_role_load_by_name($role_name)->rid;
+		return $oNewRoleID;
+	}
+	else
+	{
+		drupal_set_message('The role "'.$role_name.'" exist.', 'status');	
+		return $oRole->rid;
+	}
+}
+
+/***********************************************************
+ * I CAN NOT VERIFY THIS IF IT'S ACTUALLY WORKING OR NOT !!
+ ***********************************************************/
+function bcm_onepass_update_user($oUser, $sPassword, $fullName, $bcmId, $bcmRole, $iUserRoleID)
+{
+	//debug($oUserRole);
+
+	//$toBeUpdated = array('field_bcm_onepass_fullname' => $aUserLdapInfo[0]['displayname'][0], 'field_bcm_onepass_id' => $aUserLdapInfo[0]['employeenumber'][0], 'field_bcm_onepass_role' => $aUserLdapInfo[0]['info'][0]);
+	$aUserUpdated = array(
+							'pass' => $sPassword,
+							'field_bcm_onepass_fullname' => array('und' => array(0 => array('value' => $fullName))),
+							'field_bcm_onepass_id' => array('und' => array(0 => array('value' => $bcmId))),
+							'field_bcm_onepass_role' => array('und' => array(0 => array('value' => $bcmRole))),
+							'roles' => array(
+									DRUPAL_AUTHENTICATED_RID => $bcmRole,
+									$iUserRoleID => TRUE,
+									),
+						);
+	user_save($oUser, $aUserUpdated);
+	
+	// Code update is needed, the value below should be reload using "user_save()" again to grab most updated values.
+	drupal_set_message("Welcome back ".$fullName." : ( ".$bcmId.", ".$bcmRole." ). ", 'status');
+}
+
+function bcm_onepass_create_user($sUsername, $sPassword, $fullName, $bcmId, $bcmRole, $iUserRoleID)
+{		
+	//check to see if the role is already created, if not create one.
+	
+	//set up the user fields
+	$fields = array(
+		'name' => $sUsername,
+		'mail' => $sUsername,
+		'pass' => $sPassword,
+		'status' => 1,
+		'init' => 'email address',
+		'roles' => array(
+		  DRUPAL_AUTHENTICATED_RID => $bcmRole,
+		  $iUserRoleID => TRUE,
+		),
+		'field_bcm_onepass_fullname' => array(LANGUAGE_NONE => array(array('value' => $fullName))),
+		'field_bcm_onepass_id' => array(LANGUAGE_NONE => array(array('value' => $bcmId))),
+		'field_bcm_onepass_role' => array(LANGUAGE_NONE => array(array('value' => $bcmRole))),
+	);
+	
+	//the first parameter is left blank so a new user is created
+	user_save('', $fields);
+	
+	// Send the e-mail through the user module in case if we need to
+	//drupal_mail('user', 'register_no_approval_required', $userprincipalname, NULL, array('account' => $account), variable_get('site_mail', 'lrweb.berklee.edu'));
+	
+	drupal_set_message(t("A user account(".$sUsername.") created for ".render($fullName)."."), 'status');
+	drupal_set_message('You have assigned as Berklee "'.$bcmRole.'".', 'status');
+}
+
+
+/****************************************************************************************************************************/
+/****************************************************************************************************************************/
+/*
+ * To disable user edit tab 
+ */
+ function bcm_onepass_menu_alter(&$items) {
+ 
+  //krumo($items['user/%user/edit']);
+  $items['user/%user/edit']['type'] = MENU_CALLBACK;
+ 
+}
+/**/
+/**
+ * This one does same thing but Deprecated : USED IN TESTING MODE ONLY
+ *
+function bcm_onepass_form_user_profile_form_alter(&$form, &$form_state)
+{
+	//global $user;	
+	//$targetUser = user_load_by_name($form['account']['name']);
+	//dpm($targetUser);
+	//if($user->uid != 1)	{ $form['#access'] = FALSE;}
+}
+**/
+
+
+
+/****************************************************************************************************************************/
+/****************************************************************************************************************************/
+
+/**
+ * Implements hook_menu().
+**/
+function bcm_onepass_menu(){
+	
+	$items = array();
+	$items['admin/config/people/bcm_onepass'] = array(
+    'title' => 'Berklee OnePass LDAP',
+    'description' => 'Configuration for Berklee OnePass LDAP module',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('bcm_onepass_form'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  return $items;	
+}
+
+/**
+ * Page callback: Berklee OnePass LDAP
+ *
+ * @see current_posts_menu()
+ */
+function bcm_onepass_form($form, &$form_state) {
+  
+  //debug(time());
+  //debug(variable_get('bcm_onepass_bypass_user'));
+  
+  $form['#tree'] = TRUE;	// Prevent flattening the form values
+  
+  $form['bcm_onepass_raw_markup'] = array(
+    '#type' => 'markup',
+    '#markup' => 'This module is specifically built for Berklee OnePass Active Directory System, normally you do not need to modify anything from clean Drupal installation. <br />If you want to have any specific function or display, please contact, Ernie Gillis (egillis@berklee.edu) or Jaesung Song(jsong@berklee.edu).<br /><br />&bull; Make sure you select "<b>Visitors, but administrator approval is required</b>" of "<b>Who can register accounts?</b>" in the "<b>admin/config/people/accounts</b>" page.<br />&bull; Any roles will be created according to "info" field in Active Directory search result. (ex: info value -> "Student" will create "student" role), however you may create one manually, to create a role manually and use it for LDAP users, just make sure to use the same value in the Active Directory "info" field with lowercase letter.',
+    '#prefix' => '<p style="color:#990000">',
+    '#suffix' => '</p>',    
+  );
+  
+  $form['bcm_onepass_bypass_user'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Ldap/Drupal User Name(s) to be bypassed '),
+    '#default_value' => variable_get('bcm_onepass_bypass_user'),
+    '#size' => 128,
+    '#maxlength' => 255,
+    '#description' => t('I do not see the reason to have this but incase we need it, type each user name with comma separated value. Currently disabled.'),
+    '#required' => FALSE,
+    '#disabled' => TRUE,
+  );
+  
+    $form['bcm_onepass_keepuserpass'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Enable to store LDAP user password in Drupal\'s user account as salted(sha512) hash. '),
+    '#default_value' => variable_get('bcm_onepass_keepuserpass', 0),
+    '#size' => 1,
+    '#maxlength' => 1,
+    '#description' => t('Type any number in the field to store LDAP password in Drupal\'s user account, default is "0" which means it will not store LDAP user password. Currently disabled.'),
+    '#required' => FALSE,
+    '#disabled' => TRUE,
+    '#validate' => array('bcm_onepass_keepuserpass_validate'),
+  );
+
+  
+  
+  	// create a field set for LDAP server configuration
+	$form['bcm_onepass_data'] = array(
+		'#title' => t('LDAP Server Configuration'),
+		'#type'  => 'fieldset',
+		'#collapsible' => FALSE,
+	);
+	
+	// The server configuration field : bcm_onepass_data ( ldap_server => 'ldaps://bos-dc1.berklee.edu', port => '636', base_dn => 'dc=berklee,dc=edu' )
+	$bcm_onepass_data = variable_get('bcm_onepass_data', array());
+	$form['bcm_onepass_data']['ldap_server'] = array(
+	'#title'  => t('Active Directory Server Address'),
+	'#title_display' => 'before',
+	'#type'  => 'textfield',
+	'#default_value' => (!empty($bcm_onepass_data['ldap_server'])) ? $bcm_onepass_data['ldap_server'] : 'ldaps://bos-dc1.berklee.edu',
+	);
+	$form['bcm_onepass_data']['port'] = array(
+	'#title'  => t('Port'),
+	'#title_display' => 'before',
+	'#type' => 'textfield',
+	'#default_value' => (!empty($bcm_onepass_data['port'])) ? $bcm_onepass_data['port'] : '636', 
+	);
+	$form['bcm_onepass_data']['base_dn'] = array(
+	'#title'  => t('base DN'),
+	'#title_display' => 'before',
+	'#type' => 'textfield',
+	'#default_value' => (!empty($bcm_onepass_data['base_dn'])) ? $bcm_onepass_data['base_dn'] : 'dc=berklee,dc=edu', 
+	);
+  
+  return system_settings_form($form);
+}
+
+function bcm_onepass_keepuserpass_validate($form, &$form_state) {
+	
+	if($form['bcm_onepass_keepuserpass']['#default_value'] == "0" || $form['bcm_onepass_keepuserpass']['#default_value'] == "1" )
+	{
+		return;
+	}
+	else
+	{
+		form_set_error('bcm_onepass_keepuserpass', t('The field will not accept any value other than "1" or "0".'));
+	}	
+	
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

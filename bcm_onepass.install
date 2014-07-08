@@ -1,0 +1,133 @@
+<?php
+/**
+ * Implements hook_install().
+ */
+function bcm_onepass_install() {
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function bcm_onepass_uninstall() {
+
+}
+
+/** 
+ * Implements hook_disable()
+ * To remove all custom fields to store user information in user object
+ */
+function bcm_onepass_disable() {
+  
+  // delete the valiable for storing by passed user(s)
+  variable_del('bcm_onepass_bypass_user');
+  
+  // delete the valiable for the server configuration
+  variable_del('bcm_onepass_data');
+  
+  /*** This code might need to be moved to bcm_onepass_uninstall(), just to keep the data, well maybe not. ***/
+  // Remove the field.
+  field_delete_field("field_bcm_onepass_fullname");
+  field_delete_field("field_bcm_onepass_id");
+  field_delete_field("field_bcm_onepass_role");    
+  field_purge_batch($sandbox['max']+1);//Drupal seems to have an offbyone problem.
+  
+  drupal_set_message(t("All related fields and variables for bcm_onepass module are removed."), 'status');
+}
+
+/** 
+ * Implements hook_enable()
+ * To create three custom fields to store user information in user object
+ */
+function bcm_onepass_enable(){
+        
+    // Use me. Otherwise, I won't work because I don't know your custom defined fields ]:->
+    field_cache_clear();
+    field_associate_fields('bcm_onepass');
+    
+    // create a valiable in the valiable table, insert the adminstrator account name as a default value
+    $superUser = user_load(1);
+    variable_set('bcm_onepass_bypass_user', $superUser->name);
+    
+    // create an array valiable in the valiable table, insert Berklee OnePass configuration as default set up.
+		// SET THIS ACCORDING TO YOUR SET UP
+    //variable_set('bcm_onepass_data', array('ldap_server' => 'ldaps://[YOUR_LDAP_SERVER]', 'port' => '[PORT]', 'base_dn' => '[BASE_DN]' ));
+
+    /** field_bcm_onepass_fullname **/
+    // Already created?
+    if (field_info_field('field_bcm_onepass_fullname'))
+        return;
+
+    // Create the field singleton
+    $field = array( 'field_name' => 'field_bcm_onepass_fullname', 'type' => 'text', );
+    $field = field_create_field($field);
+
+    // Create the instance on the bundle.
+    $instance = array(
+        'field_name' => $field['field_name'],
+        'entity_type' => 'user',
+        'bundle' => 'user',
+        'label' => 'Full Name',
+        'description' => '',
+        'required' => FALSE,
+        'settings' => array(),
+        'widget' => array(),
+        'display' => array(
+        'default' => array('label' => 'inline'),
+        ),
+    );
+    field_create_instance($instance);
+
+    
+    /** bcm_onepass_id **/    
+    // Already created?
+    if (field_info_field('field_bcm_onepass_id'))
+        return;
+
+    // Create the field singleton
+    $field = array( 'field_name' => 'field_bcm_onepass_id', 'type' => 'text', );
+    $field = field_create_field($field);
+
+    // Create the instance on the bundle.
+    $instance = array(
+        'field_name' => $field['field_name'],
+        'entity_type' => 'user',
+        'bundle' => 'user',
+        'label' => 'Berklee ID',
+        'description' => '',
+        'required' => FALSE,
+        'settings' => array(),
+        'widget' => array(),
+        'display' => array(
+        'default' => array('label' => 'inline'),
+        ),
+    );
+    field_create_instance($instance);
+
+    
+    /** bcm_onepass_role **/    
+    // Already created?
+    if (field_info_field('field_bcm_onepass_role'))
+        return;
+
+    // Create the field singleton
+    $field = array( 'field_name' => 'field_bcm_onepass_role', 'type' => 'text', );
+    $field = field_create_field($field);
+
+    // Create the instance on the bundle.
+    $instance = array(
+        'field_name' => $field['field_name'],
+        'entity_type' => 'user',
+        'bundle' => 'user',
+        'label' => 'Berklee Status',
+        'description' => '',
+        'required' => FALSE,
+        'settings' => array(),
+        'widget' => array(),
+        'display' => array(
+        'default' => array('label' => 'inline'),
+        ),
+    );
+    field_create_instance($instance);
+        
+    drupal_set_message(t("Required fields and variables for bcm_onepass module are created"), 'status');
+}

@@ -1,0 +1,12 @@
+name = Berklee OnePass LDAP  
+description = This is a custom module only to connect and validate Berklee OnePass LDAP system. Currently it's in beta stage
+package = Berklee College of Music
+files[] = bcm_onepass.install
+files[] = bcm_onepass.module
+project = "bcm_onepass"
+datestamp = "1359398782"
+version = "7.x-1.0-beta1"
+core = 7.x
+configure = admin/config/people/bcm_onepass
+
+
