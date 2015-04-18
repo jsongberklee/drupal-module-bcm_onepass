@@ -3,20 +3,12 @@
  * @file
  * A custom module to use Berklee OnePass LDAP authentication
  */
-  
 function bcm_onepass_form_alter(&$form, &$form_state, $form_id)
 {
-	//echo '<pre>';
-	//var_dump($form_id);
-	//echo '</pre>';	
-	
-	//krumo($form_id);
-	
 	//check to see if the role is already created
 	//$oUserRole = user_role_load_by_name('administrator');
 	//debug($oUserRole);
 }
-
 /**
 * Implements hook_form_FORM_ID_alter(). for user_login_block
 * Insert ldap berklee onepass validator for user login block 
@@ -42,7 +34,6 @@ function bcm_onepass_form_user_login_block_alter(&$form)
 	//debug($targetUser->name);
 	/**/
 }
-
 /**
 * Implements hook_form_FORM_ID_alter(). for user_login
 * redirect to home page if an anonymous user approches, there should be a better way to do it.
@@ -59,7 +50,6 @@ function bcm_onepass_form_user_login_alter(&$form, &$form_state)
 * LDAP validating function
 * 
 */
-
 function bcm_onepass_user_login_ldap_validator($form, &$form_state)
 {
 	
@@ -86,7 +76,7 @@ function bcm_onepass_user_login_ldap_validator($form, &$form_state)
 	}
 	// static
 	//$sPort = '636';
-	//$sHost = 'ldaps://bos-dc1.berklee.edu';
+	//$sHost = 'ldaps://[server address]';
 	//$sBaseDN = 'dc=berklee,dc=edu';
 	$sHost = $bcm_onepass_data['ldap_server'];
 	$sPort = $bcm_onepass_data['port'];
@@ -107,8 +97,6 @@ function bcm_onepass_user_login_ldap_validator($form, &$form_state)
 		$sLdapRDN = $sUsername; //used by ldap_bind()
 	}
 
-	
-	
 	//-----------------------------------------------
 	// ----  STEP 1: connect to LDAP sever  ---------
 	//-----------------------------------------------
